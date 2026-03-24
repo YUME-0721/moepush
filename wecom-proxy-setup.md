@@ -5,7 +5,9 @@
 ## 架构说明
 
 ```
-MoePush Pages → Worker (pushproxy.域名) → VPS/NAS 代理 (proxy.域名) → 企业微信 API
+MoePush Pages → VPS/NAS 代理 (https://proxy.域名) → 企业微信 API
+                      ↓
+                 固定出口 IP
 ```
 
 ## 前置条件
@@ -156,51 +158,17 @@ sudo systemctl restart nginx
 
 ```bash
 sudo ufw allow 443
-sudo ufw allow 8080
 ```
 
 ---
 
-## 第二部分：Cloudflare 配置
-
-### 1. DNS 配置
+## 第二部分：Cloudflare DNS 配置
 
 | 类型 | 名称 | 内容 | 代理状态 |
 |------|------|------|---------|
 | A | proxy | 服务器IP | DNS only（灰色云朵） |
-| Worker | pushproxy | moepush-proxy | Proxied（橙色云朵） |
 
-### 2. 创建 Worker
-
-Cloudflare Dashboard → Workers & Pages → Create Worker
-
-```javascript
-export default {
-  async fetch(request) {
-    const targetUrl = request.headers.get('x-target-url');
-    if (!targetUrl) {
-      return new Response('Missing x-target-url', { status: 400 });
-    }
-
-    const method = request.method;
-    const body = method !== 'GET' ? await request.text() : undefined;
-
-    const response = await fetch('https://proxy.你的域名/', {
-      method,
-      headers: {
-        'x-target-url': targetUrl,
-      },
-      body,
-    });
-
-    return response;
-  }
-}
-```
-
-### 3. 配置 Worker 自定义域名
-
-Worker → Settings → Triggers → Custom Domains → 添加 `pushproxy.你的域名`
+**重要：** 必须是灰色云朵（DNS only），不能是橙色云朵！
 
 ---
 
@@ -224,7 +192,7 @@ Worker → Settings → Triggers → Custom Domains → 添加 `pushproxy.你的
 
 | 变量名 | 值 |
 |--------|-----|
-| `WECOM_PROXY_URL` | `https://pushproxy.你的域名` |
+| `WECOM_PROXY_URL` | `https://proxy.你的域名` |
 
 ---
 
@@ -234,11 +202,8 @@ Worker → Settings → Triggers → Custom Domains → 添加 `pushproxy.你的
 # 测试代理服务（在服务器上）
 curl -H "x-target-url: https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=test&corpsecret=test" http://127.0.0.1:8080
 
-# 测试 HTTPS 代理
+# 测试 HTTPS 代理（本地电脑）
 curl -H "x-target-url: https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=test&corpsecret=test" https://proxy.你的域名/
-
-# 测试 Worker
-curl -H "x-target-url: https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=test&corpsecret=test" https://pushproxy.你的域名/
 ```
 
 预期返回：`{"errcode":40013,"errmsg":"invalid corpid...","from ip: 你的服务器IP"...}`
@@ -248,9 +213,16 @@ curl -H "x-target-url: https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=test&
 ## 常用命令
 
 ```bash
+# 查看服务状态
 sudo systemctl status moepush-proxy
+
+# 重启服务
 sudo systemctl restart moepush-proxy
+
+# 停止服务
 sudo systemctl stop moepush-proxy
+
+# 查看日志
 journalctl -u moepush-proxy -f
 ```
 
@@ -260,7 +232,25 @@ journalctl -u moepush-proxy -f
 
 | 问题 | 解决方案 |
 |------|---------|
-| Worker 报错 1003 | DNS 记录配置错误，确认 proxy 域名是灰色云朵 |
-| Worker 报错 525 | HTTPS 配置问题，检查 SSL 证书 |
+| 代理超时无响应 | 检查代理脚本端口配置，HTTPS 目标应使用 443 端口 |
+| 连接被拒绝 | 检查防火墙、安全组是否放行 443 端口 |
+| SSL 错误 | 检查 HTTPS 配置和 SSL 证书 |
 | 推送失败 | 检查企业微信 IP 白名单、代理服务状态 |
-| 代理超时 | 检查防火墙、端口是否放行 |
+
+---
+
+## 常见错误
+
+### 代理脚本端口配置错误
+
+**错误代码：**
+```javascript
+port: parsedUrl.port || (isHttps ? 8080 : 80),  // ❌ 错误
+```
+
+**正确代码：**
+```javascript
+port: parsedUrl.port || (isHttps ? 443 : 80),   // ✅ 正确
+```
+
+HTTPS 协议默认端口是 443，不是 8080。
