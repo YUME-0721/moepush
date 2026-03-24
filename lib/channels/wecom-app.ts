@@ -15,6 +15,23 @@ interface WecomAppMessage {
   safe?: number
 }
 
+const PROXY_URL = process.env.WECOM_PROXY_URL || null
+
+async function proxyFetch(targetUrl: string, options?: RequestInit): Promise<Response> {
+  if (!PROXY_URL) {
+    return fetch(targetUrl, options)
+  }
+  
+  const headers = new Headers(options?.headers)
+  headers.set('x-target-url', targetUrl)
+  
+  return fetch(PROXY_URL, {
+    method: options?.method || 'GET',
+    headers,
+    body: options?.body,
+  })
+}
+
 export class WecomAppChannel extends BaseChannel {
   readonly config: ChannelConfig = {
     type: "wecom_app",
@@ -60,7 +77,7 @@ export class WecomAppChannel extends BaseChannel {
     
     console.log('sendWecomAppMessage message:', message)
 
-    const tokenResponse = await fetch(
+    const tokenResponse = await proxyFetch(
       `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${secret}`
     )
     const tokenData = await tokenResponse.json() as { access_token: string, errcode: number, errmsg: string }
@@ -69,7 +86,7 @@ export class WecomAppChannel extends BaseChannel {
       throw new Error(`获取访问令牌失败: ${tokenData.errmsg}`)
     }
 
-    const response = await fetch(
+    const response = await proxyFetch(
       `https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${tokenData.access_token}`,
       {
         method: 'POST',
